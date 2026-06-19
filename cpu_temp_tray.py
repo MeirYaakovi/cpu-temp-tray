@@ -472,16 +472,11 @@ def _show_history():
                     colour = "#ff3333"
                 canvas.create_line(x1, y1, x2, y2, fill=colour, width=2, capstyle="round")
 
-            # Dots
-            for x, y, tv in pts:
-                r = 3
-                if tv < green_max:
-                    c = "#22cc22"
-                elif tv < orange_max:
-                    c = "#ffaa00"
-                else:
-                    c = "#ff3333"
-                canvas.create_oval(x - r, y - r, x + r, y + r, fill=c, outline="")
+            # Single-point dot (only when there's exactly one reading)
+            if len(pts) == 1:
+                x, y, tv = pts[0]
+                c = "#22cc22" if tv < green_max else "#ffaa00" if tv < orange_max else "#ff3333"
+                canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill=c, outline="")
 
             # Fan activity strip segments
             for i in range(len(data) - 1):
