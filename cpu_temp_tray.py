@@ -12,7 +12,7 @@ HISTORY_MAXLEN = HISTORY_HOURS * 3600 // 5  # worst case: 5 s interval
 HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
 _history = collections.deque(maxlen=HISTORY_MAXLEN)  # [(timestamp, temp), ...]
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 LHM_URL = "http://localhost:8085/data.json"
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
