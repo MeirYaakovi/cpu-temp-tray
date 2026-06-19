@@ -10,7 +10,9 @@ import pystray
 HISTORY_HOURS = 12
 HISTORY_MAXLEN = HISTORY_HOURS * 3600 // 5  # worst case: 5 s interval
 HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
-_history = collections.deque(maxlen=HISTORY_MAXLEN)  # [(timestamp, temp), ...]
+_history = collections.deque(maxlen=HISTORY_MAXLEN)  # [(timestamp, temp, fan_rpm), ...]
+_last_fan_rpm = 0
+FAN_ACTIVE_RPM = 500
 
 VERSION = "1.1.0"
 LHM_URL = "http://localhost:8085/data.json"
@@ -48,9 +50,11 @@ def load_history():
     cutoff = time.time() - HISTORY_HOURS * 3600
     try:
         with open(HISTORY_FILE) as f:
-            for ts, temp in json.load(f):
+            for entry in json.load(f):
+                ts, temp = entry[0], entry[1]
+                fan_rpm = entry[2] if len(entry) > 2 else 0
                 if ts >= cutoff:
-                    _history.append((ts, temp))
+                    _history.append((ts, temp, fan_rpm))
     except Exception:
         pass
 
@@ -77,13 +81,28 @@ def _collect_temps(node, out):
         _collect_temps(child, out)
 
 
+def _collect_fans(node, out):
+    name = node.get("Text", "")
+    value = node.get("Value", "")
+    if "RPM" in value and name:
+        try:
+            out[name] = float(value.split()[0])
+        except Exception:
+            pass
+    for child in node.get("Children", []):
+        _collect_fans(child, out)
+
+
 def fetch_all_temps():
+    global _last_fan_rpm
     try:
         with urllib.request.urlopen(LHM_URL, timeout=2) as r:
             data = json.loads(r.read())
-        out = {}
-        _collect_temps(data, out)
-        return out
+        temps, fans = {}, {}
+        _collect_temps(data, temps)
+        _collect_fans(data, fans)
+        _last_fan_rpm = max(fans.values()) if fans else 0
+        return temps
     except Exception:
         return {}
 
@@ -170,7 +189,7 @@ def _apply_update(icon):
     icon.title = _format_tooltip(temp, all_temps)
 
     if temp is not None:
-        _history.append((time.time(), temp))
+        _history.append((time.time(), temp, _last_fan_rpm))
         save_history()
         is_red = temp >= _settings["orange_max"]
         if is_red and not _was_red and not _settings.get("alert_suppressed", False):
@@ -376,14 +395,14 @@ def _show_history():
         gw = cw - pl - pr
         gh = ch - pt - pb
 
-        data = list(_history)
+        data = [(e[0], e[1], e[2] if len(e) > 2 else 0) for e in _history]
         green_max = _settings["green_max"]
         orange_max = _settings["orange_max"]
 
         # Y axis range: 0 to max(orange_max+20, highest reading+10), rounded up to 10
         y_max_val = orange_max + 20
         if data:
-            y_max_val = max(y_max_val, max(t for _, t in data) + 10)
+            y_max_val = max(y_max_val, max(t for _, t, _ in data) + 10)
         y_max_val = (int(y_max_val) // 10 + 1) * 10
         y_min_val = 0
 
@@ -428,13 +447,19 @@ def _show_history():
         canvas.create_line(pl, pt, pl, pt + gh, fill="#555555", width=1)
         canvas.create_line(pl, pt + gh, pl + gw, pt + gh, fill="#555555", width=1)
 
+        # Fan strip (always drawn)
+        fan_sy, fan_ey = pt + gh + 3, pt + gh + 11
+        canvas.create_rectangle(pl, fan_sy, pl + gw, fan_ey, fill="#222222", outline="")
+        canvas.create_text(pl - 6, (fan_sy + fan_ey) // 2, text="Fan", anchor="e",
+                           fill="#666666", font=("Segoe UI", 7))
+
         # No-data message
         if not data:
             canvas.create_text(cw // 2, ch // 2, text="No data yet — waiting for readings…",
                                fill="#777777", font=("Segoe UI", 11))
         else:
             # Temperature line with colour segments
-            pts = [(to_x(ts), to_y(t), t) for ts, t in data]
+            pts = [(to_x(ts), to_y(t), t) for ts, t, _ in data]
             for i in range(len(pts) - 1):
                 x1, y1, t1v = pts[i]
                 x2, y2, t2v = pts[i + 1]
@@ -458,20 +483,30 @@ def _show_history():
                     c = "#ff3333"
                 canvas.create_oval(x - r, y - r, x + r, y + r, fill=c, outline="")
 
+            # Fan activity strip segments
+            for i in range(len(data) - 1):
+                ts1, _, rpm1 = data[i]
+                ts2, _, rpm2 = data[i + 1]
+                if (rpm1 + rpm2) / 2 >= FAN_ACTIVE_RPM:
+                    x1, x2 = to_x(ts1), to_x(ts2)
+                    canvas.create_rectangle(x1, fan_sy, x2, fan_ey,
+                                            fill="#00aacc", outline="")
+
             # X-axis time labels (up to 6)
             n_labels = min(6, len(data))
             indices = [int(i * (len(data) - 1) / max(n_labels - 1, 1)) for i in range(n_labels)]
             for idx in indices:
-                ts, _ = data[idx]
+                ts, _, _ = data[idx]
                 x = to_x(ts)
                 label = time.strftime("%H:%M:%S", time.localtime(ts))
-                canvas.create_text(x, pt + gh + 14, text=label, fill="#888888",
+                canvas.create_text(x, pt + gh + 18, text=label, fill="#888888",
                                    font=("Segoe UI", 7), anchor="n")
 
             # Current value label
-            _, last_temp = data[-1]
+            _, last_temp, last_rpm = data[-1]
+            fan_str = f"  Fan: {int(last_rpm)} RPM" if last_rpm >= FAN_ACTIVE_RPM else "  Fan: idle"
             canvas.create_text(cw - pr, pt - 4, anchor="ne",
-                               text=f"Now: {int(round(last_temp))}°C",
+                               text=f"Now: {int(round(last_temp))}°C{fan_str}",
                                fill="#dddddd", font=("Segoe UI", 9, "bold"))
 
         # Title
