@@ -26,6 +26,7 @@ HISTORY_MAXLEN = HISTORY_HOURS * 3600 // 5  # worst case: 5 s interval
 HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
 _history = collections.deque(maxlen=HISTORY_MAXLEN)  # [(timestamp, temp, fan_rpm), ...]
 _last_fan_rpm = 0
+_fan_sensors_available = None  # None = unknown, True/False after first reading
 FAN_ACTIVE_RPM = 500
 
 VERSION = "1.1.0"
@@ -132,7 +133,7 @@ def _collect_fans(node, out):
 
 
 def fetch_all_temps():
-    global _last_fan_rpm
+    global _last_fan_rpm, _fan_sensors_available
     try:
         with urllib.request.urlopen(LHM_URL, timeout=2) as r:
             data = json.loads(r.read())
@@ -140,8 +141,10 @@ def fetch_all_temps():
         _collect_temps(data, temps)
         _collect_fans(data, fans)
         _last_fan_rpm = max(fans.values()) if fans else 0
-        if not fans:
-            logging.error(f"No fan sensors found. Available sensors: {list(temps.keys())}")
+        if _fan_sensors_available is None:
+            _fan_sensors_available = bool(fans)
+            if not fans:
+                logging.error(f"No fan sensors in LHM. Sensors found: {list(temps.keys())}")
         return temps
     except Exception:
         return {}
@@ -507,11 +510,13 @@ def _show_history():
         canvas.create_line(pl, pt, pl, pt + gh, fill="#555555", width=1)
         canvas.create_line(pl, pt + gh, pl + gw, pt + gh, fill="#555555", width=1)
 
-        # Fan strip (always drawn)
+        # Fan strip (only when fan sensors are available)
+        show_fan = _fan_sensors_available
         fan_sy, fan_ey = pt + gh + 3, pt + gh + 11
-        canvas.create_rectangle(pl, fan_sy, pl + gw, fan_ey, fill="#222222", outline="")
-        canvas.create_text(pl - 6, (fan_sy + fan_ey) // 2, text="Fan", anchor="e",
-                           fill="#666666", font=("Segoe UI", 7))
+        if show_fan:
+            canvas.create_rectangle(pl, fan_sy, pl + gw, fan_ey, fill="#222222", outline="")
+            canvas.create_text(pl - 6, (fan_sy + fan_ey) // 2, text="Fan", anchor="e",
+                               fill="#666666", font=("Segoe UI", 7))
 
         # No-data message
         if not data:
@@ -539,13 +544,14 @@ def _show_history():
                 canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill=c, outline="")
 
             # Fan activity strip segments
-            for i in range(len(data) - 1):
-                ts1, _, rpm1 = data[i]
-                ts2, _, rpm2 = data[i + 1]
-                if (rpm1 + rpm2) / 2 >= FAN_ACTIVE_RPM:
-                    x1, x2 = to_x(ts1), to_x(ts2)
-                    canvas.create_rectangle(x1, fan_sy, x2, fan_ey,
-                                            fill="#00aacc", outline="")
+            if show_fan:
+                for i in range(len(data) - 1):
+                    ts1, _, rpm1 = data[i]
+                    ts2, _, rpm2 = data[i + 1]
+                    if (rpm1 + rpm2) / 2 >= FAN_ACTIVE_RPM:
+                        x1, x2 = to_x(ts1), to_x(ts2)
+                        canvas.create_rectangle(x1, fan_sy, x2, fan_ey,
+                                                fill="#00aacc", outline="")
 
             # X-axis time labels (up to 6)
             n_labels = min(6, len(data))
@@ -559,7 +565,7 @@ def _show_history():
 
             # Current value label
             _, last_temp, last_rpm = data[-1]
-            fan_str = f"  Fan: {int(last_rpm)} RPM"
+            fan_str = f"  Fan: {int(last_rpm)} RPM" if show_fan else ""
             canvas.create_text(cw - pr, pt - 4, anchor="ne",
                                text=f"Now: {int(round(last_temp))}°C{fan_str}",
                                fill="#dddddd", font=("Segoe UI", 9, "bold"))
