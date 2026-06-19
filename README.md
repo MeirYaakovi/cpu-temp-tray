@@ -5,6 +5,8 @@ A lightweight Windows system tray app that displays your CPU temperature as a li
 
 Powered by [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) as the sensor backend.
 
+![Screenshot](scrsht.png)
+
 ---
 
 ## Features
@@ -13,7 +15,8 @@ Powered by [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreH
 - Color-coded: green / orange / red based on your thresholds
 - Hover tooltip shows all sensor readings
 - Left-click to refresh instantly (with spinner animation)
-- Right-click menu: refresh interval presets, settings, about
+- Right-click menu: refresh interval presets, history graph, settings, about
+- Temperature history graph — last 12 hours, color-coded, persisted across restarts
 - Alert popup when temperature enters the red zone (with "don't show again")
 - Fully configurable: sensor, thresholds, refresh interval, icon size, font size
 - Settings persist across restarts
@@ -59,6 +62,16 @@ Left-click the tray icon → **Settings**
 | Refresh interval | How often to poll (5–3600 sec) |
 | Icon / Font size | Visual size of the tray icon |
 | Red alert | Toggle the popup warning |
+
+## Changelog
+
+### v1.1.0
+- **New:** Temperature history graph — right-click the tray icon → History to view the last 12 hours
+- **New:** History persists across restarts (`history.json` is saved on every reading)
+- **Fix:** Settings fields were blank when another window had been opened first
+
+### v1.0.0
+- Initial release
 
 ## Third-party licenses
 
