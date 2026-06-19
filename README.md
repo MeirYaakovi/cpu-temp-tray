@@ -5,7 +5,11 @@ A lightweight Windows system tray app that displays your CPU temperature as a li
 
 Powered by [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) as the sensor backend.
 
-![Screenshot](scrsht.png)
+<p align="center">
+  <img src="https://github.com/MeirYaakovi/cpu-temp-tray/releases/download/v1.1.0/scrsht1.png" height="200"/>
+  <img src="https://github.com/MeirYaakovi/cpu-temp-tray/releases/download/v1.1.0/scrsht2.png" height="200"/>
+  <img src="https://github.com/MeirYaakovi/cpu-temp-tray/releases/download/v1.1.0/scrsht3.png" height="200"/>
+</p>
 
 ---
 

@@ -5,6 +5,8 @@ lhm_test.py
 lhm_test.txt
 settings.json
 history.json
+scrsht/
+scrsht.png
 dist/
 build/
 *.spec
