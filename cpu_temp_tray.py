@@ -437,6 +437,16 @@ def open_history(icon, _item):
 
 def _show_history():
     global _history_root
+    try:
+        _show_history_inner()
+    except Exception:
+        logging.error(traceback.format_exc())
+    finally:
+        _history_root = None
+
+
+def _show_history_inner():
+    global _history_root
     import tkinter as tk
 
     W, H = 700, 320
@@ -653,7 +663,6 @@ def _show_history():
     _history_root = root
     root.after(50, refresh_loop)
     root.mainloop()
-    _history_root = None
 
 
 # ── tray menu ──────────────────────────────────────────────────────────────────
