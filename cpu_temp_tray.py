@@ -140,6 +140,8 @@ def fetch_all_temps():
         _collect_temps(data, temps)
         _collect_fans(data, fans)
         _last_fan_rpm = max(fans.values()) if fans else 0
+        if not fans:
+            logging.error(f"No fan sensors found. Available sensors: {list(temps.keys())}")
         return temps
     except Exception:
         return {}
@@ -414,11 +416,23 @@ def _show_settings(icon):
 
 # ── history graph ─────────────────────────────────────────────────────────────
 
+_history_root = None
+
+
 def open_history(icon, _item):
+    global _history_root
+    if _history_root is not None:
+        try:
+            _history_root.lift()
+            _history_root.focus_force()
+            return
+        except Exception:
+            _history_root = None
     threading.Thread(target=_show_history, daemon=True).start()
 
 
 def _show_history():
+    global _history_root
     import tkinter as tk
 
     W, H = 700, 320
@@ -563,8 +577,10 @@ def _show_history():
             logging.error(traceback.format_exc())
         root.after(2000, refresh_loop)
 
+    _history_root = root
     root.after(50, refresh_loop)
     root.mainloop()
+    _history_root = None
 
 
 # ── tray menu ──────────────────────────────────────────────────────────────────
