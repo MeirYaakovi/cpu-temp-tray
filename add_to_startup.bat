@@ -1,7 +1,7 @@
 @echo off
-:: Task 1: LHM as admin at logon (no UAC popup)
+:: Task 1: LHM as admin at logon, hidden window (no UAC popup)
 powershell -NoProfile -Command ^
-  "$a = New-ScheduledTaskAction -Execute 'C:\meir\Projects\cpu-temp-tray\lhm_bundle\LibreHardwareMonitor.exe'; ^
+  "$a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -WindowStyle Hidden -Command ""Start-Process ''''C:\meir\Projects\cpu-temp-tray\lhm_bundle\LibreHardwareMonitor.exe'''' -Verb RunAs -WindowStyle Hidden""'; ^
    $t = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME; ^
    $p = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest -LogonType Interactive; ^
    $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; ^

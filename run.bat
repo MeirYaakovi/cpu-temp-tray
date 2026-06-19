@@ -1,6 +1,6 @@
 @echo off
-:: Start LHM as admin (needed for hardware access)
-powershell -NoProfile -Command "Start-Process '%~dp0lhm_bundle\LibreHardwareMonitor.exe' -Verb RunAs"
+:: Start LHM as admin, hidden (no window to accidentally close)
+powershell -NoProfile -Command "Start-Process '%~dp0lhm_bundle\LibreHardwareMonitor.exe' -Verb RunAs -WindowStyle Hidden"
 :: Wait for LHM to initialize its web server
 timeout /t 4 /nobreak >nul
 :: Start our tray app (no admin needed)
