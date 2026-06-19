@@ -693,6 +693,7 @@ def on_quit(icon, _item):
 
 
 def main():
+    logging.error(f"Starting cpu-temp-tray v{VERSION}")
     load_settings()
     load_history()
     threading.Thread(target=_autostart_lhm, daemon=True).start()
