@@ -1,3 +1,4 @@
+import collections
 import json
 import os
 import threading
@@ -5,6 +6,11 @@ import time
 import urllib.request
 from PIL import Image, ImageDraw, ImageFont
 import pystray
+
+HISTORY_HOURS = 12
+HISTORY_MAXLEN = HISTORY_HOURS * 3600 // 5  # worst case: 5 s interval
+HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
+_history = collections.deque(maxlen=HISTORY_MAXLEN)  # [(timestamp, temp), ...]
 
 VERSION = "1.0.0"
 LHM_URL = "http://localhost:8085/data.json"
@@ -36,6 +42,25 @@ def load_settings():
 def save_settings():
     with open(SETTINGS_FILE, "w") as f:
         json.dump(_settings, f, indent=2)
+
+
+def load_history():
+    cutoff = time.time() - HISTORY_HOURS * 3600
+    try:
+        with open(HISTORY_FILE) as f:
+            for ts, temp in json.load(f):
+                if ts >= cutoff:
+                    _history.append((ts, temp))
+    except Exception:
+        pass
+
+
+def save_history():
+    try:
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(list(_history), f)
+    except Exception:
+        pass
 
 
 # ── temperature fetching ───────────────────────────────────────────────────────
@@ -145,6 +170,8 @@ def _apply_update(icon):
     icon.title = _format_tooltip(temp, all_temps)
 
     if temp is not None:
+        _history.append((time.time(), temp))
+        save_history()
         is_red = temp >= _settings["orange_max"]
         if is_red and not _was_red and not _settings.get("alert_suppressed", False):
             threading.Thread(target=_show_alert, args=(temp,), daemon=True).start()
@@ -175,7 +202,7 @@ def _show_alert(temp):
     tk.Label(root, text=f"Above red threshold ({_settings['orange_max']}°C).",
              font=("Arial", 10)).grid(row=1, column=0, columnspan=2, padx=16, pady=4)
 
-    suppress_var = tk.BooleanVar(value=False)
+    suppress_var = tk.BooleanVar(master=root, value=False)
     tk.Checkbutton(root, text="Don't show this again",
                    variable=suppress_var).grid(row=2, column=0, columnspan=2, pady=(4, 2))
 
@@ -248,33 +275,33 @@ def _show_settings(icon):
                "CPU Core #1", "CPU Core #2", "CPU Core #3", "CPU Core #4"]
 
     tk.Label(root, text="Sensor:").grid(row=0, column=0, sticky="e", **pad)
-    sensor_var = tk.StringVar(value=_settings["sensor"])
+    sensor_var = tk.StringVar(master=root, value=_settings["sensor"])
     ttk.Combobox(root, textvariable=sensor_var, values=sensors,
                  state="readonly", width=18).grid(row=0, column=1, sticky="w", **pad)
 
     tk.Label(root, text="Green up to (°C):").grid(row=1, column=0, sticky="e", **pad)
-    green_var = tk.StringVar(value=str(_settings["green_max"]))
+    green_var = tk.StringVar(master=root, value=str(_settings["green_max"]))
     tk.Entry(root, textvariable=green_var, width=6).grid(row=1, column=1, sticky="w", **pad)
 
     tk.Label(root, text="Orange up to (°C):").grid(row=2, column=0, sticky="e", **pad)
-    orange_var = tk.StringVar(value=str(_settings["orange_max"]))
+    orange_var = tk.StringVar(master=root, value=str(_settings["orange_max"]))
     tk.Entry(root, textvariable=orange_var, width=6).grid(row=2, column=1, sticky="w", **pad)
 
     tk.Label(root, text="Refresh every (sec):").grid(row=3, column=0, sticky="e", **pad)
-    interval_var = tk.StringVar(value=str(_settings["interval"]))
+    interval_var = tk.StringVar(master=root, value=str(_settings["interval"]))
     tk.Entry(root, textvariable=interval_var, width=6).grid(row=3, column=1, sticky="w", **pad)
 
     tk.Label(root, text="Icon size (px):").grid(row=4, column=0, sticky="e", **pad)
-    icon_size_var = tk.IntVar(value=_settings.get("icon_size", 64))
+    icon_size_var = tk.IntVar(master=root, value=_settings.get("icon_size", 64))
     tk.Scale(root, from_=24, to=128, orient="horizontal", variable=icon_size_var,
              length=140).grid(row=4, column=1, sticky="w", **pad)
 
     tk.Label(root, text="Font size (px):").grid(row=5, column=0, sticky="e", **pad)
-    font_size_var = tk.IntVar(value=_settings.get("font_size", 52))
+    font_size_var = tk.IntVar(master=root, value=_settings.get("font_size", 52))
     tk.Scale(root, from_=10, to=100, orient="horizontal", variable=font_size_var,
              length=140).grid(row=5, column=1, sticky="w", **pad)
 
-    alert_var = tk.BooleanVar(value=not _settings.get("alert_suppressed", False))
+    alert_var = tk.BooleanVar(master=root, value=not _settings.get("alert_suppressed", False))
     tk.Checkbutton(root, text="Show alert when temp goes red",
                    variable=alert_var).grid(row=6, column=0, columnspan=2, pady=(4, 0))
 
@@ -320,6 +347,147 @@ def _show_settings(icon):
     root.mainloop()
 
 
+# ── history graph ─────────────────────────────────────────────────────────────
+
+def open_history(icon, _item):
+    threading.Thread(target=_show_history, daemon=True).start()
+
+
+def _show_history():
+    import tkinter as tk
+
+    W, H = 700, 320
+    PAD_L, PAD_R, PAD_T, PAD_B = 56, 20, 20, 48
+
+    root = tk.Tk()
+    root.title("CPU Temperature History")
+    root.resizable(True, True)
+    root.attributes("-topmost", True)
+    root.configure(bg="#1e1e1e")
+
+    canvas = tk.Canvas(root, width=W, height=H, bg="#1e1e1e", highlightthickness=0)
+    canvas.pack(fill="both", expand=True, padx=8, pady=8)
+
+    def draw():
+        canvas.delete("all")
+        cw = canvas.winfo_width() or W
+        ch = canvas.winfo_height() or H
+        pl, pr, pt, pb = PAD_L, PAD_R, PAD_T, PAD_B
+        gw = cw - pl - pr
+        gh = ch - pt - pb
+
+        data = list(_history)
+        green_max = _settings["green_max"]
+        orange_max = _settings["orange_max"]
+
+        # Y axis range: 0 to max(orange_max+20, highest reading+10), rounded up to 10
+        y_max_val = orange_max + 20
+        if data:
+            y_max_val = max(y_max_val, max(t for _, t in data) + 10)
+        y_max_val = (int(y_max_val) // 10 + 1) * 10
+        y_min_val = 0
+
+        def to_x(ts):
+            if len(data) < 2:
+                return pl + gw // 2
+            t0, t1 = data[0][0], data[-1][0]
+            span = t1 - t0 or 1
+            return pl + int((ts - t0) / span * gw)
+
+        def to_y(val):
+            span = y_max_val - y_min_val or 1
+            return pt + gh - int((val - y_min_val) / span * gh)
+
+        # Coloured zone bands
+        zones = [
+            (0, green_max, "#1a3a1a"),
+            (green_max, orange_max, "#3a2e10"),
+            (orange_max, y_max_val, "#3a1212"),
+        ]
+        for lo, hi, colour in zones:
+            y1 = to_y(min(hi, y_max_val))
+            y2 = to_y(max(lo, y_min_val))
+            if y1 < y2:
+                canvas.create_rectangle(pl, y1, pl + gw, y2, fill=colour, outline="")
+
+        # Grid lines and Y labels
+        step = 10
+        for v in range(y_min_val, y_max_val + 1, step):
+            y = to_y(v)
+            canvas.create_line(pl, y, pl + gw, y, fill="#333333", dash=(4, 4))
+            canvas.create_text(pl - 6, y, text=f"{v}°", anchor="e",
+                               fill="#aaaaaa", font=("Segoe UI", 8))
+
+        # Threshold lines
+        canvas.create_line(pl, to_y(green_max), pl + gw, to_y(green_max),
+                           fill="#2d8a2d", dash=(6, 3), width=1)
+        canvas.create_line(pl, to_y(orange_max), pl + gw, to_y(orange_max),
+                           fill="#cc7700", dash=(6, 3), width=1)
+
+        # Axes
+        canvas.create_line(pl, pt, pl, pt + gh, fill="#555555", width=1)
+        canvas.create_line(pl, pt + gh, pl + gw, pt + gh, fill="#555555", width=1)
+
+        # No-data message
+        if not data:
+            canvas.create_text(cw // 2, ch // 2, text="No data yet — waiting for readings…",
+                               fill="#777777", font=("Segoe UI", 11))
+        else:
+            # Temperature line with colour segments
+            pts = [(to_x(ts), to_y(t), t) for ts, t in data]
+            for i in range(len(pts) - 1):
+                x1, y1, t1v = pts[i]
+                x2, y2, t2v = pts[i + 1]
+                avg = (t1v + t2v) / 2
+                if avg < green_max:
+                    colour = "#22cc22"
+                elif avg < orange_max:
+                    colour = "#ffaa00"
+                else:
+                    colour = "#ff3333"
+                canvas.create_line(x1, y1, x2, y2, fill=colour, width=2, capstyle="round")
+
+            # Dots
+            for x, y, tv in pts:
+                r = 3
+                if tv < green_max:
+                    c = "#22cc22"
+                elif tv < orange_max:
+                    c = "#ffaa00"
+                else:
+                    c = "#ff3333"
+                canvas.create_oval(x - r, y - r, x + r, y + r, fill=c, outline="")
+
+            # X-axis time labels (up to 6)
+            n_labels = min(6, len(data))
+            indices = [int(i * (len(data) - 1) / max(n_labels - 1, 1)) for i in range(n_labels)]
+            for idx in indices:
+                ts, _ = data[idx]
+                x = to_x(ts)
+                label = time.strftime("%H:%M:%S", time.localtime(ts))
+                canvas.create_text(x, pt + gh + 14, text=label, fill="#888888",
+                                   font=("Segoe UI", 7), anchor="n")
+
+            # Current value label
+            _, last_temp = data[-1]
+            canvas.create_text(cw - pr, pt - 4, anchor="ne",
+                               text=f"Now: {int(round(last_temp))}°C",
+                               fill="#dddddd", font=("Segoe UI", 9, "bold"))
+
+        # Title
+        canvas.create_text(pl + gw // 2, pt // 2, text="CPU Temperature — last 12 hours",
+                           fill="#cccccc", font=("Segoe UI", 10))
+
+    def refresh_loop():
+        if not root.winfo_exists():
+            return
+        draw()
+        root.after(2000, refresh_loop)
+
+    root.after(50, refresh_loop)
+    root.mainloop()
+
+
 # ── tray menu ──────────────────────────────────────────────────────────────────
 
 def refresh_now(icon, _item):
@@ -349,6 +517,7 @@ def on_quit(icon, _item):
 
 def main():
     load_settings()
+    load_history()
     all_temps = fetch_all_temps()
     temp = get_cpu_temp(all_temps)
 
@@ -366,6 +535,7 @@ def main():
         menu=pystray.Menu(
             pystray.MenuItem("Refresh", refresh_now, default=True, visible=False),
             pystray.MenuItem("Refresh interval", interval_menu),
+            pystray.MenuItem("History", open_history),
             pystray.MenuItem("Settings", open_settings),
             pystray.MenuItem("About", open_about),
             pystray.MenuItem("Quit", on_quit),
