@@ -426,6 +426,7 @@ def open_history(icon, _item):
     global _history_root
     if _history_root is not None:
         try:
+            _history_root.deiconify()
             _history_root.lift()
             _history_root.focus_force()
             return
@@ -447,8 +448,77 @@ def _show_history():
     root.attributes("-topmost", True)
     root.configure(bg="#1e1e1e")
 
+    # view state: seconds of data to show, and rightmost timestamp shown
+    all_data = [(e[0], e[1], e[2] if len(e) > 2 else 0) for e in _history]
+    initial_span = (all_data[-1][0] - all_data[0][0]) if len(all_data) >= 2 else HISTORY_HOURS * 3600
+    view_dur = [max(initial_span, 60)]
+    view_end = [all_data[-1][0] if all_data else time.time()]
+
+    # ── toolbar ────────────────────────────────────────────────────────────────
+    toolbar = tk.Frame(root, bg="#2a2a2a", height=30)
+    toolbar.pack(fill="x", padx=0, pady=0)
+    toolbar.pack_propagate(False)
+
+    btn = dict(bg="#3a3a3a", fg="#cccccc", relief="flat", font=("Segoe UI", 9),
+               padx=7, pady=2, activebackground="#555", activeforeground="white", cursor="hand2")
+
+    def zoom_in():
+        view_dur[0] = max(60, view_dur[0] // 2)
+        draw()
+
+    def zoom_out():
+        d = [(e[0], e[1], e[2] if len(e) > 2 else 0) for e in _history]
+        total = (d[-1][0] - d[0][0]) if len(d) >= 2 else HISTORY_HOURS * 3600
+        view_dur[0] = min(view_dur[0] * 2, max(total, 60))
+        draw()
+
+    def scroll_left():
+        d = [(e[0], e[1], e[2] if len(e) > 2 else 0) for e in _history]
+        min_end = d[0][0] + view_dur[0] if d else view_dur[0]
+        view_end[0] = max(view_end[0] - view_dur[0] * 0.25, min_end)
+        draw()
+
+    def scroll_right():
+        d = [(e[0], e[1], e[2] if len(e) > 2 else 0) for e in _history]
+        max_end = d[-1][0] if d else time.time()
+        view_end[0] = min(view_end[0] + view_dur[0] * 0.25, max_end)
+        draw()
+
+    def reset_view():
+        d = [(e[0], e[1], e[2] if len(e) > 2 else 0) for e in _history]
+        span = (d[-1][0] - d[0][0]) if len(d) >= 2 else HISTORY_HOURS * 3600
+        view_dur[0] = max(span, 60)
+        view_end[0] = d[-1][0] if d else time.time()
+        draw()
+
+    tk.Button(toolbar, text="−", command=zoom_out, **btn).pack(side="left", padx=(6, 1), pady=3)
+    tk.Button(toolbar, text="+", command=zoom_in, **btn).pack(side="left", padx=1, pady=3)
+    tk.Label(toolbar, text="zoom", bg="#2a2a2a", fg="#555", font=("Segoe UI", 8)).pack(side="left", padx=(3, 10))
+    tk.Button(toolbar, text="◀", command=scroll_left, **btn).pack(side="left", padx=1, pady=3)
+    tk.Button(toolbar, text="▶", command=scroll_right, **btn).pack(side="left", padx=1, pady=3)
+    tk.Label(toolbar, text="scroll", bg="#2a2a2a", fg="#555", font=("Segoe UI", 8)).pack(side="left", padx=(3, 10))
+    tk.Button(toolbar, text="↺", command=reset_view, **btn).pack(side="left", padx=1, pady=3)
+
+    range_lbl = tk.Label(toolbar, text="", bg="#2a2a2a", fg="#888", font=("Segoe UI", 8))
+    range_lbl.pack(side="right", padx=10)
+
+    # ── canvas ─────────────────────────────────────────────────────────────────
     canvas = tk.Canvas(root, width=W, height=H, bg="#1e1e1e", highlightthickness=0)
-    canvas.pack(fill="both", expand=True, padx=8, pady=8)
+    canvas.pack(fill="both", expand=True, padx=8, pady=(4, 8))
+
+    def on_wheel(e):
+        if e.delta > 0:
+            scroll_right()
+        else:
+            scroll_left()
+
+    canvas.bind("<MouseWheel>", on_wheel)
+    root.bind("+", lambda e: zoom_in())
+    root.bind("=", lambda e: zoom_in())
+    root.bind("-", lambda e: zoom_out())
+    root.bind("<Left>",  lambda e: scroll_left())
+    root.bind("<Right>", lambda e: scroll_right())
+    root.bind("0", lambda e: reset_view())
 
     def draw():
         canvas.delete("all")
@@ -458,11 +528,24 @@ def _show_history():
         gw = cw - pl - pr
         gh = ch - pt - pb
 
-        data = [(e[0], e[1], e[2] if len(e) > 2 else 0) for e in _history]
-        green_max = _settings["green_max"]
+        all_d = [(e[0], e[1], e[2] if len(e) > 2 else 0) for e in _history]
+        green_max  = _settings["green_max"]
         orange_max = _settings["orange_max"]
 
-        # Y axis range: 0 to max(orange_max+20, highest reading+10), rounded up to 10
+        # clamp view_end to actual data range
+        if all_d:
+            view_end[0] = min(view_end[0], all_d[-1][0])
+        t_end   = view_end[0]
+        t_start = t_end - view_dur[0]
+        data = [e for e in all_d if t_start <= e[0] <= t_end]
+
+        # update range label
+        fmt = "%H:%M" if view_dur[0] >= 3600 else "%H:%M:%S"
+        dur_str = (f"{int(view_dur[0]//3600)}h {int((view_dur[0]%3600)//60)}m"
+                   if view_dur[0] >= 3600 else f"{int(view_dur[0]//60)}m {int(view_dur[0]%60)}s")
+        range_lbl.config(text=f"{time.strftime(fmt, time.localtime(t_start))} – "
+                              f"{time.strftime(fmt, time.localtime(t_end))}  ({dur_str})")
+
         y_max_val = orange_max + 20
         if data:
             y_max_val = max(y_max_val, max(t for _, t, _ in data) + 10)
@@ -470,47 +553,40 @@ def _show_history():
         y_min_val = 0
 
         def to_x(ts):
-            if len(data) < 2:
-                return pl + gw // 2
-            t0, t1 = data[0][0], data[-1][0]
-            span = t1 - t0 or 1
-            return pl + int((ts - t0) / span * gw)
+            span = t_end - t_start or 1
+            return pl + int((ts - t_start) / span * gw)
 
         def to_y(val):
             span = y_max_val - y_min_val or 1
             return pt + gh - int((val - y_min_val) / span * gh)
 
-        # Coloured zone bands
-        zones = [
-            (0, green_max, "#1a3a1a"),
-            (green_max, orange_max, "#3a2e10"),
-            (orange_max, y_max_val, "#3a1212"),
-        ]
-        for lo, hi, colour in zones:
+        # zone bands
+        for lo, hi, colour in [(0, green_max, "#1a3a1a"),
+                                (green_max, orange_max, "#3a2e10"),
+                                (orange_max, y_max_val, "#3a1212")]:
             y1 = to_y(min(hi, y_max_val))
             y2 = to_y(max(lo, y_min_val))
             if y1 < y2:
                 canvas.create_rectangle(pl, y1, pl + gw, y2, fill=colour, outline="")
 
-        # Grid lines and Y labels
-        step = 10
-        for v in range(y_min_val, y_max_val + 1, step):
+        # grid + Y labels
+        for v in range(y_min_val, y_max_val + 1, 10):
             y = to_y(v)
             canvas.create_line(pl, y, pl + gw, y, fill="#333333", dash=(4, 4))
             canvas.create_text(pl - 6, y, text=f"{v}°", anchor="e",
                                fill="#aaaaaa", font=("Segoe UI", 8))
 
-        # Threshold lines
-        canvas.create_line(pl, to_y(green_max), pl + gw, to_y(green_max),
+        # threshold lines
+        canvas.create_line(pl, to_y(green_max),  pl + gw, to_y(green_max),
                            fill="#2d8a2d", dash=(6, 3), width=1)
         canvas.create_line(pl, to_y(orange_max), pl + gw, to_y(orange_max),
                            fill="#cc7700", dash=(6, 3), width=1)
 
-        # Axes
+        # axes
         canvas.create_line(pl, pt, pl, pt + gh, fill="#555555", width=1)
         canvas.create_line(pl, pt + gh, pl + gw, pt + gh, fill="#555555", width=1)
 
-        # Fan strip (only when fan sensors are available)
+        # fan strip
         show_fan = _fan_sensors_available
         fan_sy, fan_ey = pt + gh + 3, pt + gh + 11
         if show_fan:
@@ -518,65 +594,56 @@ def _show_history():
             canvas.create_text(pl - 6, (fan_sy + fan_ey) // 2, text="Fan", anchor="e",
                                fill="#666666", font=("Segoe UI", 7))
 
-        # No-data message
         if not data:
-            canvas.create_text(cw // 2, ch // 2, text="No data yet — waiting for readings…",
+            canvas.create_text(cw // 2, ch // 2, text="No data in this time range",
                                fill="#777777", font=("Segoe UI", 11))
         else:
-            # Temperature line with colour segments
             pts = [(to_x(ts), to_y(t), t) for ts, t, _ in data]
             for i in range(len(pts) - 1):
                 x1, y1, t1v = pts[i]
                 x2, y2, t2v = pts[i + 1]
                 avg = (t1v + t2v) / 2
-                if avg < green_max:
-                    colour = "#22cc22"
-                elif avg < orange_max:
-                    colour = "#ffaa00"
-                else:
-                    colour = "#ff3333"
-                canvas.create_line(x1, y1, x2, y2, fill=colour, width=2, capstyle="round")
+                c = "#22cc22" if avg < green_max else "#ffaa00" if avg < orange_max else "#ff3333"
+                canvas.create_line(x1, y1, x2, y2, fill=c, width=2, capstyle="round")
 
-            # Single-point dot (only when there's exactly one reading)
             if len(pts) == 1:
                 x, y, tv = pts[0]
                 c = "#22cc22" if tv < green_max else "#ffaa00" if tv < orange_max else "#ff3333"
                 canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill=c, outline="")
 
-            # Fan activity strip segments
             if show_fan:
                 for i in range(len(data) - 1):
                     ts1, _, rpm1 = data[i]
                     ts2, _, rpm2 = data[i + 1]
                     if (rpm1 + rpm2) / 2 >= FAN_ACTIVE_RPM:
-                        x1, x2 = to_x(ts1), to_x(ts2)
-                        canvas.create_rectangle(x1, fan_sy, x2, fan_ey,
+                        canvas.create_rectangle(to_x(ts1), fan_sy, to_x(ts2), fan_ey,
                                                 fill="#00aacc", outline="")
 
-            # X-axis time labels (up to 6)
-            n_labels = min(6, len(data))
-            indices = [int(i * (len(data) - 1) / max(n_labels - 1, 1)) for i in range(n_labels)]
-            for idx in indices:
+            # X-axis labels (up to 6)
+            n = min(6, len(data))
+            fmt_x = "%H:%M" if view_dur[0] >= 3600 else "%H:%M:%S"
+            for idx in [int(i * (len(data) - 1) / max(n - 1, 1)) for i in range(n)]:
                 ts, _, _ = data[idx]
-                x = to_x(ts)
-                label = time.strftime("%H:%M:%S", time.localtime(ts))
-                canvas.create_text(x, pt + gh + 18, text=label, fill="#888888",
-                                   font=("Segoe UI", 7), anchor="n")
+                canvas.create_text(to_x(ts), pt + gh + 18, anchor="n",
+                                   text=time.strftime(fmt_x, time.localtime(ts)),
+                                   fill="#888888", font=("Segoe UI", 7))
 
-            # Current value label
             _, last_temp, last_rpm = data[-1]
             fan_str = f"  Fan: {int(last_rpm)} RPM" if show_fan else ""
             canvas.create_text(cw - pr, pt - 4, anchor="ne",
                                text=f"Now: {int(round(last_temp))}°C{fan_str}",
                                fill="#dddddd", font=("Segoe UI", 9, "bold"))
 
-        # Title
         canvas.create_text(pl + gw // 2, pt // 2, text="CPU Temperature — last 12 hours",
                            fill="#cccccc", font=("Segoe UI", 10))
 
     def refresh_loop():
         if not root.winfo_exists():
             return
+        # auto-advance view_end when user is at the live edge
+        d = [(e[0], e[1], e[2] if len(e) > 2 else 0) for e in _history]
+        if d and (d[-1][0] - view_end[0]) < 30:
+            view_end[0] = d[-1][0]
         try:
             draw()
         except Exception:
