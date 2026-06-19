@@ -69,6 +69,14 @@ Left-click the tray icon → **Settings**
 
 ## Changelog
 
+### v1.2.0
+- **New:** Auto-start LHM on launch — no need to run `run.bat` manually
+- **New:** History graph zoom & scroll — `+`/`−`, `◀`/`▶`, mouse wheel, keyboard
+- **New:** Fan activity strip on graph (hidden on hardware without RPM sensors)
+- **New:** Crash logging to `crash.log`
+- **Fix:** History window now restores when minimized instead of opening a duplicate
+- **Fix:** Settings fields blank after opening another window
+
 ### v1.1.0
 - **New:** Temperature history graph — right-click the tray icon → History to view the last 12 hours
 - **New:** History persists across restarts (`history.json` is saved on every reading)
