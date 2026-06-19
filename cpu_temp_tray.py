@@ -86,7 +86,7 @@ def _collect_fans(node, out):
     value = node.get("Value", "")
     if "RPM" in value and name:
         try:
-            out[name] = float(value.split()[0])
+            out[name] = float(value.split()[0].replace(",", ""))
         except Exception:
             pass
     for child in node.get("Children", []):
