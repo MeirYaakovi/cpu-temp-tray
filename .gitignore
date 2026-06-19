@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+lhm_bundle/
+lhm_test.py
+lhm_test.txt
+settings.json
