@@ -5,6 +5,7 @@ lhm_test.py
 lhm_test.txt
 settings.json
 history.json
+crash.log
 scrsht/
 scrsht.png
 dist/

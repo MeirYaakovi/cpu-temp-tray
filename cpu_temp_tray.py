@@ -1,11 +1,17 @@
 import collections
 import json
+import logging
 import os
 import threading
 import time
+import traceback
 import urllib.request
 from PIL import Image, ImageDraw, ImageFont
 import pystray
+
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crash.log")
+logging.basicConfig(filename=LOG_FILE, level=logging.ERROR,
+                    format="%(asctime)s %(message)s")
 
 HISTORY_HOURS = 12
 HISTORY_MAXLEN = HISTORY_HOURS * 3600 // 5  # worst case: 5 s interval
@@ -182,6 +188,14 @@ def make_spinner_icon(frame):
 # ── update helper ──────────────────────────────────────────────────────────────
 
 def _apply_update(icon):
+    global _was_red
+    try:
+        _apply_update_inner(icon)
+    except Exception:
+        logging.error(traceback.format_exc())
+
+
+def _apply_update_inner(icon):
     global _was_red
     all_temps = fetch_all_temps()
     temp = get_cpu_temp(all_temps)
@@ -511,7 +525,10 @@ def _show_history():
     def refresh_loop():
         if not root.winfo_exists():
             return
-        draw()
+        try:
+            draw()
+        except Exception:
+            logging.error(traceback.format_exc())
         root.after(2000, refresh_loop)
 
     root.after(50, refresh_loop)
