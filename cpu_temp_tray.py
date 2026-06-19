@@ -1,7 +1,9 @@
 import collections
+import ctypes
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import traceback
@@ -9,20 +11,26 @@ import urllib.request
 from PIL import Image, ImageDraw, ImageFont
 import pystray
 
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crash.log")
+# Base directory: works for both script and PyInstaller exe
+if getattr(sys, "frozen", False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+LOG_FILE = os.path.join(BASE_DIR, "crash.log")
 logging.basicConfig(filename=LOG_FILE, level=logging.ERROR,
                     format="%(asctime)s %(message)s")
 
 HISTORY_HOURS = 12
 HISTORY_MAXLEN = HISTORY_HOURS * 3600 // 5  # worst case: 5 s interval
-HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
+HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
 _history = collections.deque(maxlen=HISTORY_MAXLEN)  # [(timestamp, temp, fan_rpm), ...]
 _last_fan_rpm = 0
 FAN_ACTIVE_RPM = 500
 
 VERSION = "1.1.0"
 LHM_URL = "http://localhost:8085/data.json"
-SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
 
 DEFAULT_SETTINGS = {
     "sensor": "Core Max",
@@ -71,6 +79,30 @@ def save_history():
             json.dump(list(_history), f)
     except Exception:
         pass
+
+
+# ── LHM auto-start ────────────────────────────────────────────────────────────
+
+def _lhm_url_ok():
+    try:
+        urllib.request.urlopen(LHM_URL, timeout=1)
+        return True
+    except Exception:
+        return False
+
+
+def _autostart_lhm():
+    if _lhm_url_ok():
+        return
+    lhm_exe = os.path.join(BASE_DIR, "lhm_bundle", "LibreHardwareMonitor.exe")
+    if not os.path.exists(lhm_exe):
+        return
+    try:
+        ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", lhm_exe, None, os.path.dirname(lhm_exe), 0
+        )
+    except Exception:
+        logging.error(traceback.format_exc())
 
 
 # ── temperature fetching ───────────────────────────────────────────────────────
@@ -513,7 +545,7 @@ def _show_history():
 
             # Current value label
             _, last_temp, last_rpm = data[-1]
-            fan_str = f"  Fan: {int(last_rpm)} RPM" if last_rpm >= FAN_ACTIVE_RPM else "  Fan: idle"
+            fan_str = f"  Fan: {int(last_rpm)} RPM"
             canvas.create_text(cw - pr, pt - 4, anchor="ne",
                                text=f"Now: {int(round(last_temp))}°C{fan_str}",
                                fill="#dddddd", font=("Segoe UI", 9, "bold"))
@@ -565,6 +597,7 @@ def on_quit(icon, _item):
 def main():
     load_settings()
     load_history()
+    threading.Thread(target=_autostart_lhm, daemon=True).start()
     all_temps = fetch_all_temps()
     temp = get_cpu_temp(all_temps)
 
