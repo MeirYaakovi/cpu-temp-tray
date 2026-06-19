@@ -29,7 +29,7 @@ _last_fan_rpm = 0
 _fan_detected = None   # None=unknown, True=has sensors, False=no sensors
 FAN_ACTIVE_RPM = 500
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 LHM_URL = "http://localhost:8085/data.json"
 SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
 
