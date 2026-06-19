@@ -5,3 +5,7 @@ lhm_test.py
 lhm_test.txt
 settings.json
 history.json
+dist/
+build/
+*.spec
+*.zip
