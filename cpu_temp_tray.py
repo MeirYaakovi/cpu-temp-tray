@@ -24,10 +24,7 @@ logging.basicConfig(filename=LOG_FILE, level=logging.ERROR,
 HISTORY_HOURS = 12
 HISTORY_MAXLEN = HISTORY_HOURS * 3600 // 5  # worst case: 5 s interval
 HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
-_history = collections.deque(maxlen=HISTORY_MAXLEN)  # [(timestamp, temp, fan_rpm), ...]
-_last_fan_rpm = 0
-_fan_sensors_available = None  # None = unknown, True/False after first reading
-FAN_ACTIVE_RPM = 500
+_history = collections.deque(maxlen=HISTORY_MAXLEN)  # [(timestamp, temp), ...]
 
 VERSION = "1.1.0"
 LHM_URL = "http://localhost:8085/data.json"
@@ -67,9 +64,8 @@ def load_history():
         with open(HISTORY_FILE) as f:
             for entry in json.load(f):
                 ts, temp = entry[0], entry[1]
-                fan_rpm = entry[2] if len(entry) > 2 else 0
                 if ts >= cutoff:
-                    _history.append((ts, temp, fan_rpm))
+                    _history.append((ts, temp))
     except Exception:
         pass
 
@@ -120,32 +116,13 @@ def _collect_temps(node, out):
         _collect_temps(child, out)
 
 
-def _collect_fans(node, out):
-    name = node.get("Text", "")
-    value = node.get("Value", "")
-    if "RPM" in value and name:
-        try:
-            out[name] = float(value.split()[0].replace(",", ""))
-        except Exception:
-            pass
-    for child in node.get("Children", []):
-        _collect_fans(child, out)
-
-
 def fetch_all_temps():
-    global _last_fan_rpm, _fan_sensors_available
     try:
         with urllib.request.urlopen(LHM_URL, timeout=2) as r:
             data = json.loads(r.read())
-        temps, fans = {}, {}
-        _collect_temps(data, temps)
-        _collect_fans(data, fans)
-        _last_fan_rpm = max(fans.values()) if fans else 0
-        if _fan_sensors_available is None:
-            _fan_sensors_available = bool(fans)
-            if not fans:
-                logging.error(f"No fan sensors in LHM. Sensors found: {list(temps.keys())}")
-        return temps
+        out = {}
+        _collect_temps(data, out)
+        return out
     except Exception:
         return {}
 
@@ -240,7 +217,7 @@ def _apply_update_inner(icon):
     icon.title = _format_tooltip(temp, all_temps)
 
     if temp is not None:
-        _history.append((time.time(), temp, _last_fan_rpm))
+        _history.append((time.time(), temp))
         save_history()
         is_red = temp >= _settings["orange_max"]
         if is_red and not _was_red and not _settings.get("alert_suppressed", False):
@@ -538,7 +515,7 @@ def _show_history_inner():
         gw = cw - pl - pr
         gh = ch - pt - pb
 
-        all_d = [(e[0], e[1], e[2] if len(e) > 2 else 0) for e in _history]
+        all_d = [(e[0], e[1]) for e in _history]
         green_max  = _settings["green_max"]
         orange_max = _settings["orange_max"]
 
@@ -549,6 +526,7 @@ def _show_history_inner():
         t_start = t_end - view_dur[0]
         data = [e for e in all_d if t_start <= e[0] <= t_end]
 
+
         # update range label
         fmt = "%H:%M" if view_dur[0] >= 3600 else "%H:%M:%S"
         dur_str = (f"{int(view_dur[0]//3600)}h {int((view_dur[0]%3600)//60)}m"
@@ -558,7 +536,7 @@ def _show_history_inner():
 
         y_max_val = orange_max + 20
         if data:
-            y_max_val = max(y_max_val, max(t for _, t, _ in data) + 10)
+            y_max_val = max(y_max_val, max(t for _, t in data) + 10)
         y_max_val = (int(y_max_val) // 10 + 1) * 10
         y_min_val = 0
 
@@ -596,19 +574,11 @@ def _show_history_inner():
         canvas.create_line(pl, pt, pl, pt + gh, fill="#555555", width=1)
         canvas.create_line(pl, pt + gh, pl + gw, pt + gh, fill="#555555", width=1)
 
-        # fan strip
-        show_fan = _fan_sensors_available
-        fan_sy, fan_ey = pt + gh + 3, pt + gh + 11
-        if show_fan:
-            canvas.create_rectangle(pl, fan_sy, pl + gw, fan_ey, fill="#222222", outline="")
-            canvas.create_text(pl - 6, (fan_sy + fan_ey) // 2, text="Fan", anchor="e",
-                               fill="#666666", font=("Segoe UI", 7))
-
         if not data:
             canvas.create_text(cw // 2, ch // 2, text="No data in this time range",
                                fill="#777777", font=("Segoe UI", 11))
         else:
-            pts = [(to_x(ts), to_y(t), t) for ts, t, _ in data]
+            pts = [(to_x(ts), to_y(t), t) for ts, t in data]
             for i in range(len(pts) - 1):
                 x1, y1, t1v = pts[i]
                 x2, y2, t2v = pts[i + 1]
@@ -621,27 +591,18 @@ def _show_history_inner():
                 c = "#22cc22" if tv < green_max else "#ffaa00" if tv < orange_max else "#ff3333"
                 canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill=c, outline="")
 
-            if show_fan:
-                for i in range(len(data) - 1):
-                    ts1, _, rpm1 = data[i]
-                    ts2, _, rpm2 = data[i + 1]
-                    if (rpm1 + rpm2) / 2 >= FAN_ACTIVE_RPM:
-                        canvas.create_rectangle(to_x(ts1), fan_sy, to_x(ts2), fan_ey,
-                                                fill="#00aacc", outline="")
-
             # X-axis labels (up to 6)
             n = min(6, len(data))
             fmt_x = "%H:%M" if view_dur[0] >= 3600 else "%H:%M:%S"
             for idx in [int(i * (len(data) - 1) / max(n - 1, 1)) for i in range(n)]:
-                ts, _, _ = data[idx]
+                ts, _ = data[idx]
                 canvas.create_text(to_x(ts), pt + gh + 18, anchor="n",
                                    text=time.strftime(fmt_x, time.localtime(ts)),
                                    fill="#888888", font=("Segoe UI", 7))
 
-            _, last_temp, last_rpm = data[-1]
-            fan_str = f"  Fan: {int(last_rpm)} RPM" if show_fan else ""
+            _, last_temp = data[-1]
             canvas.create_text(cw - pr, pt - 4, anchor="ne",
-                               text=f"Now: {int(round(last_temp))}°C{fan_str}",
+                               text=f"Now: {int(round(last_temp))}°C",
                                fill="#dddddd", font=("Segoe UI", 9, "bold"))
 
         canvas.create_text(pl + gw // 2, pt // 2, text="CPU Temperature — last 12 hours",
@@ -651,7 +612,7 @@ def _show_history_inner():
         if not root.winfo_exists():
             return
         # auto-advance view_end when user is at the live edge
-        d = [(e[0], e[1], e[2] if len(e) > 2 else 0) for e in _history]
+        d = list(_history)
         if d and (d[-1][0] - view_end[0]) < 30:
             view_end[0] = d[-1][0]
         try:
